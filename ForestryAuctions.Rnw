@@ -1,0 +1,541 @@
+\documentclass[11pt]{article}
+\usepackage{hyperref}
+\usepackage{amssymb}
+\usepackage[round]{natbib}
+\usepackage{amsmath}
+\usepackage{amsthm}
+%\usepackage{geometry} 
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{microtype}
+\usepackage{float}
+%\usepackage{multind}
+\usepackage{bbm}
+\DeclareGraphicsRule{.tif}{png}{.png}{`convert #1 `dirname #1`/`basename #1 .tif`.png}
+\newtheorem{asm}{Assumption}
+\newtheorem{thm}{Theorem}
+\newtheorem{dfn}{Definition}
+\newcommand{\R}{\textbf{R}}
+
+  
+\usepackage{Sweave}
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Forestry Auctions}
+\author{Christopher P. Adams}
+  
+\section{Introduction}
+
+
+\begin{enumerate}
+\item Introduction
+\item Import auction data
+\item First Price Auctions
+\item Second Price Auctions
+\item Testing for collusion
+\end{enumerate}
+
+
+\section{Auction Types}
+
+
+\url{https://youtu.be/692uYk1pHFQ}
+
+\url{https://youtu.be/ACKT5jWJHTI}
+
+\emph{What types of items are sold through auctions?}
+
+Four types of Auctions:  \emph{What are examples of each?}
+\begin{enumerate}
+  \item English - auctioneer raises price as bidder’s call out their bid.
+  \item Dutch - price falls until someone bids.
+  \item Sealed bid - bidders submit written bids, and the winner pays her bid.
+  \item Vickery - bidders submit written bids and the winner pays the next highest bid.
+\end{enumerate}
+
+
+
+
+\section{Timber Data}
+
+The data used here is from the US Forest Service downloaded from Phil Haile's website.
+\url{http://www.econ.yale.edu/~pah29/timber/timber.htm}.
+
+In order to estimate the distributions of bids and valuations it is helpful to ``normalize'' them so that we are comparing apples to apples.  The standard method is to use a log function of the bid amount and run OLS on various characteristics of the auction including the number of acres bid on, the estimated value of the timber, access costs and characteristics of the forest and species \citep{Haile:2006}. \cite{Baldwin:1997} discuss the importance of various observable characteristics of timber auctions.
+
+ 
+<<>>=
+x <- read.csv("auctions.csv", as.is = TRUE)
+lm1 <- lm(log_amount ~ factor(Salvage) + Acres + 
+            Sale.Size + log_value + Haul + 
+            Road.Construction + factor(Species) + 
+            factor(Region) + factor(Forest) + 
+            factor(District), data=x)
+y <- x[-lm1$na.action,]
+y$norm_bid <- lm1$residuals
+@
+
+<<>>=
+round(mean(y$norm_bid), 3)
+round(sd(y$norm_bid), 3)
+@
+
+
+
+\begin{figure}[h!]
+\begin{center}
+<<fig=TRUE,fig.width = 3, fig.height = 4, fig.align='center',echo=FALSE>>=
+hist(y$norm_bid,main="",xlab="bid")
+@
+\caption{Histogram of normalized bid residual for US Forest Service auctions from 1977.  \label{fig:histbid}}
+\end{center}
+\end{figure}
+
+In general, we are looking for a normal-like distribution. Does this distribution look normal? It is approximately normal, but it is skewed somewhat to lower values.  This may be due to low bids in the English auction.  How does the distribution look if only sealed bids are graphed?
+
+
+
+
+
+
+
+
+
+
+
+\section{First Price Auctions}
+
+\subsection{Sealed Bid Estimator}
+
+The first step is to estimate the bid distribution.
+\begin{equation}
+\hat{H}(b) = \frac{1}{N}\sum_{i=1}^N \mathbbm{1}(b_i < b)
+\label{eq:hatH}
+\end{equation}
+
+The second step is to estimate the derivative of the bid distribution.  This can be calculated numerically for some given ``small'' number, $\epsilon$.
+
+\begin{equation}
+\hat{h}(b) = \frac{\hat{H}(b + \epsilon) - \hat{H}(b - \epsilon)}{2 \epsilon}
+\label{eq:hath}
+\end{equation}
+If there are two bidders, Equation (\ref{eq:focb2}) determines the valuation for each bidder.
+\begin{equation}
+\hat{v}_i = b_i + \frac{\hat{H}(b_i)}{\hat{h}(b_i)}
+\label{eq:vi}
+\end{equation}
+where $i \in \{1, 2\}$
+
+
+\subsection{Sealed Bid Auctions}
+
+In order to simplify things we will limit the analysis to two-bidder auctions.  In the data, sealed bid auctions are denoted ``S''.
+
+<<>>=
+f_sealed_2bid <- function(bids, epsilon=0.5) {
+  # epsilon for "small" number for finite difference method 
+  # of taking numerical derivatives.
+  values <- rep(NA,length(bids))
+  for (i in 1:length(bids)) {
+    H_hat <- mean(bids < bids[i])
+    # bid probability distribution
+    h_hat <- (mean(bids < bids[i] + epsilon) - 
+      mean(bids < bids[i] - epsilon))/(2*epsilon)
+    # bid density
+    values[i] <- bids[i] + H_hat/h_hat
+  }
+  return(values)
+}
+@
+
+
+\subsection{Simulated Data}
+
+<<>>=
+set.seed(123456789)
+M <- 1000  # number of simulated auctions.
+data1 <- matrix(NA,M,12)
+for (i in 1:M) {
+  N <- round(runif(1, min=2,max=10)) # number of bidders.
+  v <- runif(N) # valuations, uniform distribution.
+  b <- (N - 1)*v/N # bid function
+  p <- max(b)  # auction price
+  x <- rep(NA,10)
+  x[1:N] <- b  # bid data
+  data1[i,1] <- N
+  data1[i,2] <- p
+  data1[i,3:12] <- x
+}
+colnames(data1) <- c("Num","Price","Bid1",
+                     "Bid2","Bid3","Bid4",
+                     "Bid5","Bid6","Bid7",
+                     "Bid8","Bid9","Bid10")
+data1 <- as.data.frame(data1)
+@
+
+
+
+<<>>=
+x <- data1[data1$Num==2,3:4]
+bids <- c(x$Bid1,x$Bid2)
+@
+
+
+<<>>=
+values <- f_sealed_2bid(bids)
+summary(bids)
+summary(values)
+@
+
+
+
+
+
+<<>>=
+f_sealed_Nbid <- function(bids, N, epsilon=0.5) {
+  values <- rep(NA,length(bids))
+  for (i in 1:length(bids)) {
+    H_hat <- mean(bids < bids[i])
+    h_hat <- (mean(bids < bids[i] + epsilon) - 
+      mean(bids < bids[i] - epsilon))/(2*epsilon)
+    G_hat <- H_hat^(N-1)
+    g_hat <- (N-1)*h_hat*H_hat^(N-2)
+    values[i] <- bids[i] + G_hat/g_hat
+  }
+  return(values)
+}
+@
+
+<<>>=
+values <- f_sealed_Nbid(bids, N=10,
+                        epsilon=1)
+values <- values[is.na(values)==0]
+mean(values)
+sd(values)
+@
+
+
+
+\subsection{Actual Data}
+ 
+<<>>=
+y1 <- y[y$num_bidders==2 & y$Method.of.Sale=="S",]
+bids <- y1$norm_bid
+values <- f_sealed_2bid(bids)
+summary(bids)
+summary(values)
+@
+
+Using the same method that we used above, it is possible to back out an estimate of the value distribution from the bids in the data.  We see that comparing the valuations to the bids, the bids are significantly shaded particularly for higher valuations.
+
+
+
+
+
+
+
+
+
+
+
+
+\section{Second Price Auctions}
+
+
+\subsection{Order Statistics}
+
+The probability of the second highest of $N$ valuations is equal to some value $b$ which is given by the following formula:
+\begin{equation}
+\Pr(b^{(N-1):N} = b) = N(N-1)F(b)^{N-2}f(b)(1 - F(b))
+\label{eq:order}
+\end{equation}
+The order statistic notation for the second highest bid of $N$ is $b^{(N-1):N}$.  
+We can parse this equation from back to front. It states that the probability of seeing a price equal to $b$ is the probability that one bidder has a value greater than $b$.  This is the winner of the auction and this probability is given by $1 - F(b)$, where $F(b)$ is the cumulative probability of a bidder's valuation less than $b$.  This probability is multiplied by the probability that there is exactly one bidder with a valuation of $b$.  This is the second highest bidder who is assumed to bid her value.  This is represented by the density function $f(b)$.  These two values are multiplied by the probability that the remaining bidders have valuations less than $b$.  If there are $N$ bidders in the auction then $N-2$ of them have valuations less than the price.  The probability of this occurring is $F(b)^{N-2}$.  Lastly, the labeling of the bidders is irrelevant so there are $\frac{N!}{1!(N-2)!} = N(N-1)$ possible combinations.  If the auction has two bidders, then the probability of observing a price $p$ is $2 f(p)(1 - F(p))$.  
+
+
+\subsection{English Auction Estimator}
+
+Let $v = \{v_1, v_2, ..., v_K\}$.
+
+The initial step determines the probability at the minimum value,
+\begin{equation}
+\hat{F}(v_1) = \frac{\sum_{j=1}^M \mathbbm{1}(p_j \le v_1)}{2M}
+\label{eq:hatfv0}
+\end{equation}
+where there are $M$ auctions and $p_j$ is the price in auction $j$.
+
+To this initial condition, we can add an iteration equation.
+\begin{equation}
+\hat{F}(v_k) = \frac{\sum_{j=1}^M \mathbbm{1}(v_k < p_j \le v_{k+1})}{2M (1 - \hat{F}(v_{k-1}))} + \hat{F}(v_{k-1})
+\label{eq:hatfvk}
+\end{equation}
+These equations are then used to determine the distribution of the valuations.
+
+
+
+
+\subsection{English Auctions}
+
+Again consider two-bidder auctions.  The English auctions are denoted ``A''.
+
+<<>>=
+f_English_2bid <- function(price, K=100, epsilon=1e-8) {
+  # K number of finite values.
+  # epsilon small number for getting the probabilities 
+  # calculated correctly.
+  min1 <- min(price)
+  max1 <- max(price)
+  diff1 <- (max1 - min1)/K
+  Fv <- matrix(NA,K,2)
+  min_temp <- min1 - epsilon
+  max_temp <- min_temp + diff1
+  # determines the boundaries of the cell.
+  Fv[1,1] <- (min_temp + max_temp)/2
+  gp <- mean(price > min_temp & price < max_temp)
+  # price probability
+  Fv[1,2] <- gp/2  # initial probability
+  for (k in 2:K) {
+    min_temp <- max_temp - epsilon
+    max_temp <- min_temp + diff1
+    Fv[k,1] <- (min_temp + max_temp)/2
+    gp <- mean(price > min_temp & price < max_temp)
+    Fv[k,2] <- gp/(2*(1 - Fv[k-1,2])) + Fv[k-1,2]
+    # cumulative probability
+  }
+  colnames(Fv) <- c("value", "percentile")
+  return(Fv)
+}
+@
+ 
+ 
+<<>>=
+y2 <- y[y$num_bidders==2 & y$Method.of.Sale=="A",]
+price <- y2[y2$Rank==2,]$norm_bid
+Fv <- f_English_2bid(price)
+@
+
+We can back out the value distribution assuming that the price is the second highest bid, the second highest order statistic.\index{subjectindex}{order statistic}
+
+\subsection{Comparing Estimates}
+
+
+\begin{figure}[h!]
+\begin{center}
+<<fig=TRUE,fig.width = 3, fig.height = 4, fig.align='center',echo=TRUE>>=
+plot(Fv[,1], Fv[,2], type = "l", lwd=4, ylim=c(0,1),
+     xlab="$",ylab="%", main="",col=1)
+lines(ecdf(values), lwd=2,do.points=FALSE)
+# ecdf() calculates the probability distribution.
+legend("topleft",c("Values (English)",
+                   "Values (Sealed)"),
+       lwd=c(4,2))
+@
+\caption{Comparison of estimated distributions from two bidder English and sealed bid auctions.  \label{fig:plotcompare}}
+\end{center}
+\end{figure}
+
+Figure \ref{fig:plotcompare} shows that there is not a whole lot of difference between the estimate of the distribution of valuations from sealed bid auctions and English auctions.  The two distributions of valuations from the sealed bid auctions and English auctions lie fairly close to each other, particularly for lower values.  This suggests loggers are bidding rationally.  That said, at higher values, the two distributions diverge.  The value distribution from the sealed bid auctions suggests that valuations are higher than the estimate from the English auctions.  What else may explain this divergence?
+
+
+
+
+
+
+
+
+
+
+\section{Are Loggers Colluding?}
+
+Is there evidence that bidders in these auctions are colluding?  
+Above, we find mixed evidence that bidders in timber auctions are behaving irrationally.  Now we can ask whether they are behaving competitively.  
+
+Given the price is an order statistic, prices should be increasing in the number of bidders. Figure \ref{fig:plot_prices} presents a plot of the number of bidders in an English auction against the price.  The figure suggests that this relationship is not clear.  One explanation is that bidders are colluding.  It could be that bidders in larger auctions are underbidding.  Of course, there may be many other reasons for the observed relationship.  
+ 
+
+\begin{figure}[h!]
+\begin{center}
+<<fig=TRUE,fig.width = 3, fig.height = 4, fig.align='center',echo=TRUE>>=
+plot(y[y$Rank==2 & y$Method.of.Sale=="A",]$num_bidders,
+     y[y$Rank==2 & y$Method.of.Sale=="A",]$norm_bid,
+     xlab="Number Bidders", ylab="price")
+@
+\caption{Plot of prices against number of bidders.  \label{fig:plot_prices}}
+\end{center}
+\end{figure}
+
+\subsection{A Test of Collusion}
+
+Consider the following test of collusion.  Using large English auctions we can estimate the distribution of  valuations.  Under the prevailing assumptions, this estimate should be the same as for two-bidder auctions.  If the estimate from the large auctions suggests valuations are much lower than for two-bidder auctions, this suggests collusion.    
+
+In particular, if the inferred valuations in these larger auctions look much like auctions with fewer bidders.  That is, bidders may behave ``as if'' there are actually fewer bidders in the auction.  For example, if there is an active \textbf{bid-ring}, bidders may have a mechanism for determining who will win the auction and how the losers may be compensated for not bidding.  In an English auction, it is simple to enforce a collusive agreement because members of the bid-ring can bid in the auction where their actions are observed.  
+
+We can estimate the distribution under the assumption that there are two bidders in the auction and the assumption that there are three bidders in the auction.  If these estimates are consistent with the results from the actual two bidder auctions, then we have an estimate of the bid-ring size.  Consider an auction with six bidders.  If three of them are members of a bid ring, then those three will agree on who should bid from the ring.  Only one of the members of the bid ring will bid their value.  In the data, this will look like there are actually four bidders in the auction.
+
+\subsection{ ``Large'' English Auctions}
+
+Consider the case where there are six bidders in the auction.  From above, the order statistic formula for this case is as follows.
+\begin{equation}
+\Pr(b^{5:6} = b) = 30 F(b)^4 f(b) (1 - F(b))
+\label{eq:order6}
+\end{equation}
+As above, order statistics are used to determine the underlying value distribution ($F$); however in this case it is a little more complicated to determine the starting value.  
+
+Think about the situation where the price in a 6 bidder auction is observed at the minimum valuation.  What do we know?  As before, one bidder may have a value equal to the minimum or a value above the minimum.  That is, their value could be anything.  The probability of a valuation lying between the minimum and maximum value is 1.  We also know that the five other bidders had valuations at the minimum.  If not, one of them would have bid more and the price would have been higher.  As there are six bidders, there are six different bidders that could have had the highest valuation.  This reasoning gives the following formula for the starting value.
+\begin{equation}
+\Pr(b^{5:6} < v_1) = 6F(v_1)^5
+\label{eq:order6_min}
+\end{equation}
+Rearranging, we have $F(v_1) = \left(\frac{\Pr(p<v_1)}{6}\right)^{\frac{1}{5}}$.  
+
+Given this formula we can use the same method as above to solve for the distribution of valuations.  
+
+\subsection{Large English Auction Estimator}
+
+Again we can estimate the value distribution by using an iterative process.  In this case we have the following estimators.
+\begin{equation}
+\hat{F}(v_1) = \left (\frac{\sum_{j=1}^M \mathbbm{1}(p_j < v_1)}{6M} \right)^{\frac{1}{5}}
+\label{eq:hatfv06}
+\end{equation}
+and
+\begin{equation}
+\hat{F}(v_k) = \frac{\sum_{j=1}^M \mathbbm{1}(v_{k} < p_j < v_{k+1})}{30 M \hat{F}(v_{k-1})^4 (1 - \hat{F}(v_{k-1}))} + \hat{F}(v_{k-1})
+\label{eq:hatfvk6}
+\end{equation}
+The other functions are as defined in the previous section.
+
+We can also solve for the implied distribution under the assumption that there are three bidders and under the assumption that there are two bidders.\footnote{See Equation (\ref{eq:order}) for the other cases.}  Note in each auction there are at least six bidders.
+
+\subsection{Large English Auction Estimator in \R{}}
+
+We can adjust the estimator above to allow any number of bidders, $N$.
+
+ 
+<<>>=
+f_English_Nbid <- function(price, N, K=100, epsilon=1e-8) {
+  min1 <- min(price)
+  max1 <- max(price)
+  diff1 <- (max1 - min1)/K
+  Fv <- matrix(NA,K,2)
+  min_temp <- min1 - epsilon
+  max_temp <- min_temp + diff1
+  Fv[1,1] <- (min_temp + max_temp)/2
+  gp <- mean(price > min_temp & price < max_temp)
+  Fv[1,2] <- (gp/N)^(1/(N-1))
+  for (k in 2:K) {
+    min_temp <- max_temp - epsilon
+    max_temp <- min_temp + diff1
+    Fv[k,1] <- (min_temp + max_temp)/2
+    gp <- mean(price > min_temp & price < max_temp)
+    Fv[k,2] <- 
+      gp/(N*(N-1)*(Fv[k-1,2]^(N-2))*(1 - Fv[k-1,2])) + 
+      Fv[k-1,2]
+  }
+  colnames(Fv) <- c("value", "percentile")
+  return(Fv)
+}
+y_6 <- y[y$num_bidders > 5 & y$Method.of.Sale=="A",]
+# English auctions with at least 6 bidders.
+price_6 <- y_6$norm_bid[y_6$Rank==2]
+Fv_6 <- f_English_Nbid(price_6, N=6)
+Fv_3 <- f_English_Nbid(price_6, N=3)
+Fv_2 <- f_English_2bid(price_6)
+@
+
+
+\subsection{Evidence of Collusion}
+
+\begin{figure}[h!]
+\begin{center}
+<<fig=TRUE,fig.width = 3, fig.height = 4, fig.align='center',echo=TRUE>>=
+plot(Fv[,1], Fv[,2], type = "l", lwd=3, ylim=c(0,1.5),xlab="$",
+     xlim=c(-1.2,1.6),ylab="%", main="")
+lines(Fv_6[,1], Fv_6[,2], lwd=3, lty = 2)
+lines(Fv_3[,1], Fv_3[,2], lwd=3, lty = 3)
+lines(Fv_2[,1], Fv_2[,2], lwd=3, lty = 4)
+legend("topleft",c("Values (2 bidder)",
+                   "Values (6 bidders)","Values (as if 3 bidders)", 
+                   "Values (as if 2 bidders)"),
+       lwd=3,lty=1:4)
+@
+\caption{Comparison of estimated distribution of valuations from English auctions with at least 6 bidders. These estimates are compared to the estimate from 2 bidder auctions. \label{fig:plot6bid}}
+\end{center}
+\end{figure}
+
+Figure \ref{fig:plot6bid} suggests that there is in fact collusion in these auctions!  Assuming there are six bidders in the auction implies that valuations are much lower than we estimated for two bidder auctions from both English auctions and sealed bid auctions.  In the chart, the distribution function is shifted to the left, meaning there is greater probability of lower valuations.  
+
+If we assume the estimates from the two bidder auctions are the truth, then we can determine the size of the bid-ring.  Estimates assuming there are three bidders and two bidders lie above and below the true value, respectively.  This suggests that bidders are behaving as if there are between two and three bidders in the auction.  This implies that the bid ring has between three and four bidders in each auction.
+
+These results are suggestive of an active bid ring in these auctions in 1977.  It turns out that this was of real concern.  In 1977, the United States Senate conducted hearings into collusion in these auctions.  In fact, this may be why the US Forestry Service looked into changing to sealed bid auctions.  The US Department of Justice also brought cases against loggers and millers \citep{Baldwin:1997}.  Alternative empirical approaches have also found evidence of collusion in these auctions, including \cite{Baldwin:1997} and \cite{Athey:2011}.
+
+
+\subsection{Large Sealed Bid Auction Estimator}
+
+One concern with the previous analysis is that there may be something special about auctions with a relatively large number of bidders.  It may that there are unobservable characteristics of the auctions that are leading to the observed differences.  To check this possibility we can compare our estimate of the value distribution from large sealed bid auctions.
+
+For this case the probability of winning the auction is slightly different than the simple case above.
+\begin{equation}
+\hat{G}(b | 6) = \hat{H}(b)^{5}
+\label{eq:hatGb6}
+\end{equation}
+and
+\begin{equation}
+\hat{g}(b | 6) = 5 \hat{h}(b) \hat{H}(b)^4
+\label{eq:hatgb6}
+\end{equation}
+where $\hat{H}(b)$ and $\hat{h}(b)$ are defined above.
+
+
+\subsection{Large Sealed Bid Auction Estimator in \R{}}
+
+ 
+<<>>=
+f_sealed_Nbid <- function(bids, N, epsilon=0.5) {
+  values <- rep(NA,length(bids))
+  for (i in 1:length(bids)) {
+    H_hat <- mean(bids < bids[i])
+    h_hat <- (mean(bids < bids[i] + epsilon) - 
+      mean(bids < bids[i] - epsilon))/(2*epsilon)
+    G_hat <- H_hat^(N-1)
+    g_hat <- (N-1)*h_hat*H_hat^(N-2)
+    values[i] <- bids[i] + G_hat/g_hat
+  }
+  return(values)
+}
+
+y_6 <- y[y$num_bidders > 5 & y$Method.of.Sale=="S",]
+bids_6 <- y_6$norm_bid
+values_6 <- f_sealed_Nbid(bids_6, N=6,epsilon=3)
+@
+
+As for two person auctions, the first step is to estimate each bidder's valuation.
+
+\begin{figure}[h!]
+\begin{center}
+<<fig=TRUE,fig.width = 3, fig.height = 4, fig.align='center',echo=TRUE>>=
+plot(Fv[,1], Fv[,2], type = "l", lwd=2, ylim=c(0,1.5),xlab="$",
+     xlim=c(-1.2,1.6),ylab="%", main="")
+lines(ecdf(values), lwd=4, do.points=FALSE)
+lines(ecdf(values_6), lwd=6, do.points=FALSE)
+legend("topleft",c("Values (2 bidder English)", 
+                   "Values (2 bidder sealed)",
+                   "Values (6 bidder sealed)"),
+       lwd=c(2,4,6))
+@
+\caption{Comparison of estimated distribution of valuations from sealed bid auctions with at least six bidders. These estimates are compared to the estimate from two bidder auctions. \label{fig:plot6bid2}}
+\end{center}
+\end{figure}
+
+The results presented in Figure \ref{fig:plot6bid2} provide additional evidence that there is collusion in the large English auctions.  The bidding behavior in the larger sealed bid auctions is consistent with both bidding behavior in small sealed bid auctions and small English auctions.
+
+
+
+
+
+
+\bibliographystyle{plainnat}
+\bibliography{ei}
+
+
+\end{document}
